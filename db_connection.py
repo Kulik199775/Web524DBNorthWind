@@ -122,3 +122,61 @@ class Database:
         except Exception as ex:
             print(f'Ошибка при создании таблиц: {ex}')
             return False
+
+    def execute_query(self, query, params):
+        """Выполнение SQL запросов и возврат результата"""
+        try:
+            if self.conn is None:
+                if not self.connect():
+                    return None
+
+            cursor = self.conn.cursor()
+
+            if params:
+                cursor.execute(query, params)
+            else:
+                cursor.execute(query)
+
+            if query.strip().upper().startswith('SELECT'):
+                columns = [column[0] for column in cursor.description]
+
+                result = []
+                for row in cursor.fetchall():
+                    row_dict = {}
+                    for i, col in enumerate(columns):
+                        row_dict[col] = row[i]
+                    result.append(row_dict)
+
+                cursor.close()
+                return result
+            else:
+                self.conn.commit()
+                cursor.close()
+                return None
+        except Exception as ex:
+            print(f'Ошибка выполнения запроса: {ex}')
+            return None
+
+    def insert_customers_from_csv(self, customers_data):
+        """Вставляет данные о клиентах из CSV в базу данных"""
+
+        inserted_count = 0
+
+        for customer in customers_data:
+            query = """
+                IF NOT EXISTS (SELECT 1 FROM customers_data WHERE customer_id = ?)
+                INSERT INTO customers_data (customer_id, company_name, contact_name)
+                VALUES (?, ?, ?)
+            """
+            result = self.execute_query(query, (
+                customer['customer_id'],
+                customer['customer_id'],
+                customer['company_name'],
+                customer['contact_name']
+            ))
+
+            if result is None:  # Успешная вставка
+                inserted_count += 1
+
+        print(f"Вставлено {inserted_count} клиентов")
+        return inserted_count
