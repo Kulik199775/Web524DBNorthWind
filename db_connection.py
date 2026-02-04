@@ -45,4 +45,28 @@ class Database:
             print(f'Ошибка подключения: {ex}')
 
 
+    def create_database(self):
+        """Создание базы данных"""
+        try:
+            pad_database_conn_str = (
+                f"DRIVER={{{self.DRIVER}}};"
+                f"SERVER={self.SERVER};"
+                "DATABASE=pad_database;"
+            )
+            if self.PASSWORD:
+                pad_database_conn_str += f'UID={self.USER};PWD={self.PASSWORD};'
+            else:
+                pad_database_conn_str += 'Trusted_Connection=yes'
 
+            pad_database_conn_str += 'TrustServerCertificate=yes'
+            pad_database = pyodbc.connect(pad_database_conn_str)
+            pad_database.autocommit = True
+            cursor = pad_database.cursor()
+            cursor.execute(f'CREATE DATABASE [{self.DATABASE}]')
+            print(f'База данных {self.DATABASE} успешно создана')
+            cursor.close()
+            pad_database.close()
+            return True
+
+        except Exception as ex:
+            print(f'Ошибка при создании БД: {ex}')
