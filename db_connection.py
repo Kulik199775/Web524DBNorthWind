@@ -70,3 +70,55 @@ class Database:
 
         except Exception as ex:
             print(f'Ошибка при создании БД: {ex}')
+
+    def create_table(self):
+        """Создание таблиц в БД NorthWind"""
+
+        try:
+            # убеждаемся, что подключение установлено
+            if self.conn is None:
+                if not self.connect():
+                    return False
+
+            cursor = self.conn.cursor()
+
+            # таблица customers_data
+            cursor.execute("""IF NOT EXISTS 
+                            (SELECT * FROM sysobjects WHERE name='customers_data' AND xtype='U')
+                            CREATE TABLE customers_data (
+                                customer_id NVARCHAR(10) PRIMARY KEY NOT NULL,
+                                company_name NVARCHAR(100) NOT NULL,
+                                contact_name NVARCHAR(50) NOT NULL
+                            )""")
+
+            # таблица employees_data
+            cursor.execute("""IF NOT EXISTS 
+                        (SELECT * FROM sysobjects WHERE name='employees_data' AND xtype='U')
+                        CREATE TABLE employees_data (
+                            employee_id INT IDENTITY(1,1) PRIMARY KEY NOT NULL,
+                            first_name NVARCHAR(100) NOT NULL,
+                            last_name NVARCHAR(100) NOT NULL,
+                            title NVARCHAR(100) NOT NULL,
+                            birth_date DATE NOT NULL,
+                            notes NVARCHAR(1000) NOT NULL
+                        )""")
+
+            # таблица orders_data
+            cursor.execute("""IF NOT EXISTS 
+                        (SELECT * FROM sysobjects WHERE name='orders_data' AND xtype='U')
+                        CREATE TABLE orders_data (
+                            order_id INT IDENTITY(1,1) PRIMARY KEY,
+                            customer_id NVARCHAR(10) NOT NULL,
+                            employee_id INT NOT NULL,
+                            order_date DATE NOT NULL,
+                            ship_city NVARCHAR(100) NOT NULL,
+                            FOREIGN KEY (customer_id) REFERENCES customers_data(customer_id),
+                            FOREIGN KEY (employee_id) REFERENCES employees_data(employee_id)
+                        )""")
+            cursor.close()
+            print(f'Таблицы успешно созданы')
+            return True
+
+        except Exception as ex:
+            print(f'Ошибка при создании таблиц: {ex}')
+            return False
