@@ -2,6 +2,7 @@ import csv
 
 import pyodbc
 import os
+from dotenv import load_dotenv
 
 class Database:
     """Класс для подключения к SQL Server и создания БД NorthWind"""
@@ -9,16 +10,18 @@ class Database:
     def __init__(self):
         """Инициализация подключения к MSSQL Server"""
 
+        load_dotenv()
         self.SERVER = os.getenv('MS_SQL_SERVER')
         self.DATABASE = os.getenv('MS_SQL_DATABASE')
         self.USER = os.getenv('MS_SQL_USER')
         self.PASSWORD = os.getenv('MS_SQL_KEY')
         self.DRIVER = os.getenv('MS_SQL_DRIVER')
+        self.PAD_DATABASE = os.getenv('MS_SQL_PAD_DATABASE')
 
         self.conn = None
         self.connection_string = None
 
-    def connect(self, password):
+    def connect(self, password=None):
         """Установка подключения к БД"""
 
         try:
@@ -50,28 +53,50 @@ class Database:
     def create_database(self):
         """Создание базы данных"""
         try:
-            pad_database_conn_str = (
+            pad_conn_str = (
                 f"DRIVER={{{self.DRIVER}}};"
                 f"SERVER={self.SERVER};"
-                "DATABASE=pad_database;"
+                f"DATABASE={self.PAD_DATABASE};"
+                f"UID={self.USER};"
+                f"PWD={self.PASSWORD};"
+                "TrustServerCertificate=yes;"
+                "Encrypt=no"
             )
-            if self.PASSWORD:
-                pad_database_conn_str += f'UID={self.USER};PWD={self.PASSWORD};'
-            else:
-                pad_database_conn_str += 'Trusted_Connection=yes'
+            pad_database = pyodbc.connect(pad_conn_str)
+            print(f"✓ Подключились к {self.PAD_DATABASE}")
 
-            pad_database_conn_str += 'TrustServerCertificate=yes'
-            pad_database = pyodbc.connect(pad_database_conn_str)
             pad_database.autocommit = True
             cursor = pad_database.cursor()
-            cursor.execute(f'CREATE DATABASE [{self.DATABASE}]')
-            print(f'База данных {self.DATABASE} успешно создана')
+
+            # Проверяем, существует ли база данных
+            cursor.execute(f"""
+                            IF NOT EXISTS (SELECT name FROM sys.databases WHERE name = '{self.DATABASE}')
+                            BEGIN
+                                CREATE DATABASE [{self.DATABASE}]
+                                PRINT 'База данных {self.DATABASE} создана'
+                            END
+                            ELSE
+                            BEGIN
+                                PRINT 'База данных {self.DATABASE} уже существует'
+                            END
+                        """)
+
+            # Выполняем дополнительный запрос для проверки
+            cursor.execute(f"SELECT name FROM sys.databases WHERE name = '{self.DATABASE}'")
+            result = cursor.fetchone()
+
+            if result:
+                print(f"✓ База данных '{self.DATABASE}' создана/существует")
+            else:
+                print(f"✗ Не удалось создать базу данных '{self.DATABASE}'")
+
             cursor.close()
             pad_database.close()
             return True
 
         except Exception as ex:
-            print(f'Ошибка при создании БД: {ex}')
+            print(f'✗ Ошибка при создании БД: {ex}')
+            return False
 
     def create_table(self):
         """Создание таблиц в БД NorthWind"""
@@ -231,26 +256,21 @@ class Database:
         employees_data = self.read_csv_data(filename)
         inserted_count = 0
 
-        for i, employee in enumerate(employees_data, 1):
-            employee['employee_id'] = i
-
         for employee in employees_data:
             first_name = employee.get('first_name') or employee.get('FirstName')
             last_name = employee.get('last_name') or employee.get('LastName')
             title = employee.get('title') or employee.get('Title')
             birth_date = employee.get('birth_date') or employee.get('BirthDate')
             notes = employee.get('notes') or employee.get('Notes')
-            employee_id = employee.get('employee_id')
 
-            if not all([first_name, last_name, title, birth_date, notes, employee_id]):
+            if not all([first_name, last_name, title, birth_date, notes]):
                 print(f'Пропущена запись с неполными данными: {employee}')
                 continue
 
             query = """
-                            IF NOT EXISTS (SELECT 1 FROM employees_data WHERE employee_id = ?)
-                            INSERT INTO employees_data (employee_id, first_name, last_name, title, birth_date, notes)
-                            VALUES (?, ?, ?, ?, ?, ?)
-                        """
+                INSERT INTO employees_data (first_name, last_name, title, birth_date, notes)
+                VALUES (?, ?, ?, ?, ?)
+            """
             result = self.execute_query(query, (
                 first_name,
                 last_name,
@@ -271,16 +291,30 @@ class Database:
         orders_data = self.read_csv_data(filename)
         inserted_count = 0
 
+        employees_query = "SELECT employee_id FROM employees_data"
+        existing_employees = self.execute_query(employees_query)
+        if existing_employees is None:
+            existing_employees = []
+
+        employee_ids = [str(row['employee_id']) for row in existing_employees]
+        if not employee_ids:
+            print("ОШИБКА: В таблице employees_data нет записей. Нельзя вставить заказы.")
+            return 0
+
         for order in orders_data:
             # Обрабатываем названия колонок
-            order_id = order.get('order_id') or order.get('OrderID')
             customer_id = order.get('customer_id') or order.get('CustomerID')
             employee_id = order.get('employee_id') or order.get('EmployeeID')
             order_date = order.get('order_date') or order.get('OrderDate')
             ship_city = order.get('ship_city') or order.get('ShipCity')
 
-            if not all([order_id, customer_id, employee_id, order_date, ship_city]):
+            if not all([customer_id, employee_id, order_date, ship_city]):
                 print(f"Пропущена запись с неполными данными: {order}")
+                continue
+
+            # Проверяем, существует ли сотрудник
+            if str(employee_id) not in employee_ids:
+                print(f"Пропущен заказ: сотрудник с ID {employee_id} не существует")
                 continue
 
             query = """
@@ -296,9 +330,21 @@ class Database:
 
             if result is not None and result > 0:
                 inserted_count += 1
+            else:
+                print(f"Не удалось вставить заказ: customer_id={customer_id}, employee_id={employee_id}")
 
         print(f"Вставлено {inserted_count} заказов")
         return inserted_count
+
+    def select_all_data(self, table_name):
+        """Получение всех данных из таблицы"""
+        query = f"SELECT * FROM {table_name}"
+        result = self.execute_query(query)
+        if result is not None:
+            print(f"Найдено {len(result)} записей в таблице {table_name}")
+            for row in result:
+                print(row)
+        return result
 
     def select_data_with_condition(self, table_name, condition=None):
         """Получение данных из таблицы с заданным условием"""
@@ -360,3 +406,69 @@ class Database:
             self.conn.close()
             print("\nСоединение с базой данных закрыто")
             self.conn = None
+
+
+if __name__ == "__main__":
+
+    try:
+        drivers = pyodbc.drivers()
+        print(f"Найдено драйверов ODBC: {len(drivers)}")
+        for driver in drivers:
+            print(f"  - {driver}")
+    except:
+        print("Не удалось получить список драйверов")
+
+    # Инициализация базы данных
+    db = Database()
+
+    # 1. Создание базы данных
+    db.create_database()
+
+    # 2. Подключение к базе данных
+    db.connect(password=None)
+
+    # 3. Создание таблиц
+    db.create_table()
+
+    # 4. Импорт данных из CSV файлов
+    print("\n" + "=" * 50)
+    print("ИМПОРТ ДАННЫХ ИЗ CSV")
+    print("=" * 50)
+
+    db.insert_customers_from_csv("customers_data.csv")
+    db.insert_employees_from_csv("employees_data.csv")
+    db.insert_orders_from_csv("orders_data.csv")
+
+    # 5. Просмотр данных
+    print("\n" + "=" * 50)
+    print("ПРОСМОТР ДАННЫХ")
+    print("=" * 50)
+
+    db.select_all_data("customers_data")
+    db.select_all_data("employees_data")
+    db.select_all_data("orders_data")
+
+    # 6. Пример запроса с условием
+    print("\n" + "=" * 50)
+    print("ПОИСК ДАННЫХ")
+    print("=" * 50)
+
+    # Поиск заказов с определенным клиентом
+    db.select_data_with_condition(
+        "orders_data",
+        "customer_id = 'ALFKI'"
+    )
+
+    # 7. Пример обновления данных
+    print("\n" + "=" * 50)
+    print("ОБНОВЛЕНИЕ ДАННЫХ")
+    print("=" * 50)
+
+    db.update_record(
+        "customers_data",
+        {"contact_name": "Новый Контакт"},
+        "customer_id = 'ALFKI'"
+    )
+
+    # 8. Закрытие соединения
+    db.close_connection()
